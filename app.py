@@ -1,4 +1,13 @@
 import streamlit as st
+
+# Set page configuration - MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Data Analysis Tool",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -29,14 +38,6 @@ try:
 except ImportError:
     langchain_available = False
     st.sidebar.warning("LangChain is not installed. Some AI features will be limited. Run 'pip install langchain' to install it.")
-
-# Set page configuration
-st.set_page_config(
-    page_title="Data Analysis Tool",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Initialize session state variables if they don't exist
 if 'df' not in st.session_state:
