@@ -73,14 +73,13 @@ You can access the live application here: [AI-Powered Data Analysis Tool](https:
 - Plotly
 - Requests
 - PIL (Python Imaging Library)
-- OpenAI (optional, for AI features)
-- LangChain (optional, for advanced AI features)
+- OpenAI
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone "https://github.com/sashi789/AI-Powered-Data-Analysis"
 cd data-visualization
 
 2. Install the required Python packages:
@@ -90,5 +89,6 @@ pip install -r requirements.txt
 3. Run the Streamlit app:
 ```bash
 streamlit run app.py 
+
 alternately, you can use the below link:
 Link for the app: https://ai-powered-data-analysis-x2nhyofcxya54kxaayblkg.streamlit.app/
