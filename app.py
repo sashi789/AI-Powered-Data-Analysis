@@ -48,6 +48,10 @@ if 'original_df' not in st.session_state:
     st.session_state.original_df = None
 if 'api_data' not in st.session_state:
     st.session_state.api_data = None
+if 'datasets' not in st.session_state:
+    st.session_state.datasets = {}
+if 'clear_filters' not in st.session_state:
+    st.session_state.clear_filters = False
 
 # Set OpenAI API key
 openai_api_key = st.sidebar.text_input("Enter your OpenAI API Key", type="password")
@@ -57,7 +61,7 @@ if openai_api_key:
 
 # Sidebar navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Data Upload", "Data Exploration", "Data Cleaning", "Visualization", "AI Insights", "Download"])
+page = st.sidebar.radio("Go to", ["Data Upload", "Data Exploration", "Data Cleaning", "Visualization", "AI Insights", "Download", "Join Datasets"])
 
 # Function to load data from various sources
 def load_data(file_or_api):
@@ -110,7 +114,7 @@ def explore_data(df):
     
     # Display data sample
     st.subheader("Data Sample")
-    st.dataframe(df.head(10))
+    st.dataframe(df.head(10), use_container_width=True)
     
     # Display summary statistics
     st.subheader("Summary Statistics")
@@ -160,7 +164,7 @@ def clean_data(df):
     with col1:
         column_to_change = st.selectbox("Select column to change type", df.columns)
     with col2:
-        new_type = st.selectbox("Select new data type", ["int", "float", "str", "datetime"])
+        new_type = st.selectbox("Select new data type", ["int", "float", "str", "datetime", "date", "month", "year"])
     
     if st.button("Change Data Type"):
         try:
@@ -172,6 +176,12 @@ def clean_data(df):
                 df[column_to_change] = df[column_to_change].astype(str)
             elif new_type == "datetime":
                 df[column_to_change] = pd.to_datetime(df[column_to_change])
+            elif new_type == "date":
+                df[column_to_change] = pd.to_datetime(df[column_to_change]).dt.date
+            elif new_type == "month":
+                df[column_to_change] = pd.to_datetime(df[column_to_change]).dt.to_period('M')
+            elif new_type == "year":
+                df[column_to_change] = pd.to_datetime(df[column_to_change]).dt.year
             
             st.session_state.df = df
             st.success(f"Data type of '{column_to_change}' changed to {new_type}")
@@ -215,15 +225,101 @@ def clean_data(df):
         st.session_state.df = df
         st.success(f"Removed {original_count - len(df)} duplicate rows")
     
+    # In the clean_data function
     # Display current dataframe
     st.subheader("Current Data")
-    st.dataframe(df.head(10))
+    st.dataframe(df.head(10), use_container_width=True)
     
     return df
 
 # Function for data visualization
 def visualize_data(df):
     st.subheader("Data Visualization")
+    
+    # Add data filtering options
+    with st.expander("Filter Data for Visualization"):
+        st.write("Apply filters to visualize a subset of your data")
+        
+        # Add a clear filters button at the top
+        if st.button("Clear All Filters", key="clear_filters_button"):
+            # This will trigger a rerun of the app, effectively resetting all filters
+            st.session_state.clear_filters = True
+            st.experimental_rerun()
+        
+        # Create filters for each column
+        filter_cols = st.columns(3)
+        filters_applied = False
+        filtered_df = df.copy()
+        
+        for i, column in enumerate(df.columns):
+            with filter_cols[i % 3]:
+                # Different filter types based on data type
+                if pd.api.types.is_numeric_dtype(df[column]):
+                    # Numeric filter
+                    st.write(f"**{column}**")
+                    min_val = float(df[column].min())
+                    max_val = float(df[column].max())
+                    step = (max_val - min_val) / 100 if max_val > min_val else 0.1
+                    
+                    # Handle case where min and max are the same
+                    if min_val == max_val:
+                        st.write(f"Value: {min_val}")
+                        continue
+                        
+                    filter_range = st.slider(
+                        f"Range for {column}",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=(min_val, max_val),
+                        step=step,
+                        key=f"filter_{column}"
+                    )
+                    
+                    if filter_range != (min_val, max_val):
+                        filtered_df = filtered_df[(filtered_df[column] >= filter_range[0]) & 
+                                                 (filtered_df[column] <= filter_range[1])]
+                        filters_applied = True
+                
+                elif pd.api.types.is_bool_dtype(df[column]):
+                    # Boolean filter
+                    st.write(f"**{column}**")
+                    bool_filter = st.multiselect(
+                        f"Select values for {column}",
+                        options=[True, False],
+                        default=[True, False],
+                        key=f"filter_{column}"
+                    )
+                    
+                    if set(bool_filter) != {True, False}:
+                        filtered_df = filtered_df[filtered_df[column].isin(bool_filter)]
+                        filters_applied = True
+                
+                else:
+                    # Categorical/text filter
+                    st.write(f"**{column}**")
+                    unique_values = df[column].dropna().unique()
+                    if len(unique_values) <= 20:  # Only show multiselect for reasonable number of categories
+                        cat_filter = st.multiselect(
+                            f"Select values for {column}",
+                            options=unique_values,
+                            default=unique_values,
+                            key=f"filter_{column}"
+                        )
+                        
+                        if set(cat_filter) != set(unique_values):
+                            filtered_df = filtered_df[filtered_df[column].isin(cat_filter)]
+                            filters_applied = True
+                    else:
+                        st.write(f"Too many unique values ({len(unique_values)}) to filter")
+        
+        # Show filter status and counts
+        if filters_applied:
+            st.success(f"Filters applied! Showing {len(filtered_df)} of {len(df)} rows ({(len(filtered_df)/len(df)*100):.1f}%)")
+        else:
+            st.info("No filters applied. Showing all data.")
+    
+    # Use filtered_df instead of df for visualizations
+    viz_df = filtered_df
     
     # Select visualization type
     viz_type = st.selectbox("Select Visualization Type", 
@@ -233,36 +329,41 @@ def visualize_data(df):
     if viz_type == "Bar Chart":
         col1, col2 = st.columns(2)
         with col1:
-            x_column = st.selectbox("Select X-axis column", df.columns)
+            x_column = st.selectbox("Select X-axis column", viz_df.columns)
         with col2:
-            y_column = st.selectbox("Select Y-axis column", df.select_dtypes(include=[np.number]).columns)
+            y_column = st.selectbox("Select Y-axis column", viz_df.columns)
         
-        fig = px.bar(df, x=x_column, y=y_column, title=f"Bar Chart: {y_column} by {x_column}")
-        st.plotly_chart(fig, use_container_width=True)
+        # Check if the selected Y column is numeric before creating the chart
+        if pd.api.types.is_numeric_dtype(viz_df[y_column]):
+            fig = px.bar(viz_df, x=x_column, y=y_column, title=f"Bar Chart: {y_column} by {x_column}")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error(f"Cannot create bar chart: '{y_column}' is not a numeric column. Please select a numeric column for the Y-axis.")
     
     elif viz_type == "Line Chart":
         col1, col2 = st.columns(2)
         with col1:
-            x_column = st.selectbox("Select X-axis column", df.columns)
+            x_column = st.selectbox("Select X-axis column", viz_df.columns)
         with col2:
-            y_column = st.selectbox("Select Y-axis column", df.select_dtypes(include=[np.number]).columns)
+            y_column = st.selectbox("Select Y-axis column", viz_df.select_dtypes(include=[np.number]).columns)
         
-        fig = px.line(df, x=x_column, y=y_column, title=f"Line Chart: {y_column} by {x_column}")
+        fig = px.line(viz_df, x=x_column, y=y_column, title=f"Line Chart: {y_column} by {x_column}")
         st.plotly_chart(fig, use_container_width=True)
     
+    # Continue with the rest of your visualization code, but use viz_df instead of df
     elif viz_type == "Scatter Plot":
         col1, col2, col3 = st.columns(3)
         with col1:
-            x_column = st.selectbox("Select X-axis column", df.select_dtypes(include=[np.number]).columns)
+            x_column = st.selectbox("Select X-axis column", viz_df.select_dtypes(include=[np.number]).columns)
         with col2:
-            y_column = st.selectbox("Select Y-axis column", df.select_dtypes(include=[np.number]).columns)
+            y_column = st.selectbox("Select Y-axis column", viz_df.select_dtypes(include=[np.number]).columns)
         with col3:
-            color_column = st.selectbox("Select Color column (optional)", ["None"] + list(df.columns))
+            color_column = st.selectbox("Select Color column (optional)", ["None"] + list(viz_df.columns))
         
         if color_column == "None":
-            fig = px.scatter(df, x=x_column, y=y_column, title=f"Scatter Plot: {y_column} vs {x_column}")
+            fig = px.scatter(viz_df, x=x_column, y=y_column, title=f"Scatter Plot: {y_column} vs {x_column}")
         else:
-            fig = px.scatter(df, x=x_column, y=y_column, color=color_column, title=f"Scatter Plot: {y_column} vs {x_column} by {color_column}")
+            fig = px.scatter(viz_df, x=x_column, y=y_column, color=color_column, title=f"Scatter Plot: {y_column} vs {x_column} by {color_column}")
         
         st.plotly_chart(fig, use_container_width=True)
     
@@ -359,9 +460,8 @@ def ai_insights(df):
             Keep your response concise and focused on the most important aspects.
             """
             
-            # Call OpenAI API using the new client format
-            client = openai.OpenAI(api_key=openai_api_key)
-            response = client.chat.completions.create(
+            # Call OpenAI API using the compatible format
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data analysis assistant."},
@@ -370,9 +470,9 @@ def ai_insights(df):
                 max_tokens=1000
             )
             
-            # Display the response (updated to match new response format)
+            # Display the response
             st.write("### AI-Generated Data Summary")
-            st.write(response.choices[0].message.content)
+            st.write(response['choices'][0]['message']['content'])
             
         except Exception as e:
             st.error(f"Error generating AI insights: {e}")
@@ -417,9 +517,8 @@ def ai_insights(df):
             Keep your response concise and focused on the most important aspects.
             """
             
-            # Call OpenAI API using the new client format
-            client = openai.OpenAI(api_key=openai_api_key)
-            response = client.chat.completions.create(
+            # Call OpenAI API using the compatible format
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data analysis assistant."},
@@ -428,9 +527,9 @@ def ai_insights(df):
                 max_tokens=800
             )
             
-            # Display the response (updated to match new response format)
+            # Display the response
             st.write(f"### AI Analysis of '{column_to_analyze}'")
-            st.write(response.choices[0].message.content)
+            st.write(response['choices'][0]['message']['content'])
             
         except Exception as e:
             st.error(f"Error analyzing column: {e}")
@@ -458,9 +557,8 @@ def ai_insights(df):
             Focus on visualizations that would reveal important patterns or relationships in the data.
             """
             
-            # Call OpenAI API using the new client format
-            client = openai.OpenAI(api_key=openai_api_key)
-            response = client.chat.completions.create(
+            # Call OpenAI API using the compatible format
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data visualization expert."},
@@ -469,9 +567,9 @@ def ai_insights(df):
                 max_tokens=1000
             )
             
-            # Display the response (updated to match new response format)
+            # Display the response
             st.write("### AI-Recommended Visualizations")
-            st.write(response.choices[0].message.content)
+            st.write(response['choices'][0]['message']['content'])
             
         except Exception as e:
             st.error(f"Error generating visualization recommendations: {e}")
@@ -513,23 +611,208 @@ def base64_encode_data(data):
     b64 = base64.b64encode(data).decode()
     return b64
 
+# Function to join multiple datasets
+def join_datasets():
+    st.subheader("Join Multiple Datasets")
+    
+    # Upload new dataset section
+    st.write("### Upload New Dataset")
+    
+    # Create a container for the upload form
+    with st.container():
+        uploaded_file = st.file_uploader("Choose a file", type=['csv', 'xlsx', 'json'], key="join_uploader")
+        dataset_name = st.text_input("Enter a name for this dataset", key="dataset_name_input")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            add_button = st.button("Add Dataset", key="add_dataset_button")
+        
+        if uploaded_file is not None and dataset_name and add_button:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                elif uploaded_file.name.endswith('.xlsx'):
+                    df = pd.read_excel(uploaded_file)
+                elif uploaded_file.name.endswith('.json'):
+                    df = pd.json_normalize(json.loads(uploaded_file.getvalue().decode('utf-8')))
+                
+                # Add dataset to session state
+                st.session_state.datasets[dataset_name] = df
+                st.success(f"Dataset '{dataset_name}' added successfully! Shape: {df.shape}")
+                
+                # Clear the inputs to allow for another upload
+                st.session_state["dataset_name_input"] = ""
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+    
+    # Display available datasets
+    st.write("### Available Datasets")
+    if st.session_state.datasets:
+        for name, df in st.session_state.datasets.items():
+            st.write(f"**{name}**: {df.shape[0]} rows × {df.shape[1]} columns")
+            with st.expander(f"Preview of {name}"):
+                st.dataframe(df.head())
+        
+        with col2:
+            if st.button("Clear All Datasets", key="clear_datasets_button"):
+                st.session_state.datasets = {}
+                st.success("All datasets cleared")
+                st.experimental_rerun()
+    else:
+        st.info("No datasets available. Please upload at least two datasets to join.")
+    
+    # Join datasets if at least two are available
+    if len(st.session_state.datasets) >= 2:
+        st.write("### Join Datasets")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            left_dataset = st.selectbox("Select left dataset", list(st.session_state.datasets.keys()), key="left_ds")
+        with col2:
+            right_dataset = st.selectbox("Select right dataset", list(st.session_state.datasets.keys()), key="right_ds")
+        with col3:
+            join_type = st.selectbox("Select join type", ["left", "right", "inner", "outer"], key="join_type")
+        
+        # Get columns for joining
+        if left_dataset and right_dataset and left_dataset != right_dataset:
+            left_df = st.session_state.datasets[left_dataset]
+            right_df = st.session_state.datasets[right_dataset]
+            
+            left_columns = left_df.columns.tolist()
+            right_columns = right_df.columns.tolist()
+            
+            # Allow selecting multiple columns for join
+            st.write("### Select Join Columns")
+            st.info("Select one or more columns from each dataset to join on. Multiple columns create a composite key.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**{left_dataset} Columns**")
+                left_on = st.multiselect("Select column(s) from left dataset", 
+                                         left_columns, 
+                                         key="left_cols")
+            with col2:
+                st.write(f"**{right_dataset} Columns**")
+                right_on = st.multiselect("Select column(s) from right dataset", 
+                                          right_columns, 
+                                          key="right_cols")
+            
+            # Validate column selections
+            if len(left_on) != len(right_on):
+                st.warning("You must select the same number of columns from each dataset")
+            
+            # Join button
+            if len(left_on) > 0 and len(right_on) > 0 and len(left_on) == len(right_on):
+                if st.button("Join Datasets", key="join_button"):
+                    try:
+                        # For single column joins
+                        if len(left_on) == 1 and len(right_on) == 1:
+                            result_df = pd.merge(
+                                left_df, 
+                                right_df,
+                                left_on=left_on[0],
+                                right_on=right_on[0],
+                                how=join_type
+                            )
+                        # For multi-column joins
+                        else:
+                            result_df = pd.merge(
+                                left_df, 
+                                right_df,
+                                left_on=left_on,
+                                right_on=right_on,
+                                how=join_type
+                            )
+                        
+                        # Create a descriptive name for the joined dataset
+                        join_cols_str = "-".join(left_on)
+                        result_name = f"{left_dataset}_{join_type}_join_{right_dataset}_on_{join_cols_str}"
+                        
+                        # Save the joined dataset
+                        st.session_state.datasets[result_name] = result_df
+                        
+                        st.success(f"Datasets joined successfully! Result shape: {result_df.shape}")
+                        # In the join_datasets function
+                        st.write("### Preview of Joined Data")
+                        st.dataframe(result_df.head(), use_container_width=True)
+                        
+                        # Option to use this as the main dataset
+                        if st.button("Use as main dataset", key="use_main_button"):
+                            st.session_state.df = result_df
+                            st.session_state.original_df = result_df.copy()
+                            st.session_state.file_name = f"{result_name}.csv"
+                            st.success("Joined dataset set as the main dataset for analysis")
+                            
+                    except Exception as e:
+                        st.error(f"Error joining datasets: {e}")
+                        st.error(f"Details: {str(e)}")
+            else:
+                st.info("Please select at least one column from each dataset to join on")
+        else:
+            st.warning("Please select two different datasets to join")
+    
+    # Option to clear all datasets
+    if st.session_state.datasets and st.button("Clear All Datasets"):
+        st.session_state.datasets = {}
+        st.success("All datasets cleared")
+
 # Main application
 def main():
     st.title("📊 Advanced Data Analysis Tool")
     
+    # In the main function, update the Data Upload page section
     # Data Upload Page
     if page == "Data Upload":
         st.header("Data Upload")
+        
+        # Display current dataset if it exists (from a join operation)
+        if st.session_state.df is not None and st.session_state.file_name is not None:
+            st.success(f"Current dataset: {st.session_state.file_name}")
+            st.info(f"Shape: {st.session_state.df.shape[0]} rows × {st.session_state.df.shape[1]} columns")
+            
+            # In the main function, for the preview of current dataset
+            with st.expander("Preview current dataset"):
+                st.dataframe(st.session_state.df.head(10), use_container_width=True)
+        
+        # Display option to use joined datasets if available
+        if st.session_state.datasets:
+            st.write("### Use Joined Dataset")
+            st.info("Select from available datasets to use for analysis")
+            
+            # Create a list of dataset names and their shapes for the selectbox
+            dataset_options = [f"{name} ({df.shape[0]} rows × {df.shape[1]} columns)" 
+                              for name, df in st.session_state.datasets.items()]
+            
+            selected_dataset = st.selectbox("Select dataset", 
+                                           ["None"] + dataset_options,
+                                           key="select_joined_dataset")
+            
+            if selected_dataset != "None" and st.button("Use Selected Dataset"):
+                # Extract the dataset name from the selection (remove the shape info)
+                dataset_name = selected_dataset.split(" (")[0]
+                
+                # Set the selected dataset as the main dataset
+                st.session_state.df = st.session_state.datasets[dataset_name]
+                st.session_state.original_df = st.session_state.datasets[dataset_name].copy()
+                st.session_state.file_name = f"{dataset_name}.csv"
+                
+                st.success(f"Now using '{dataset_name}' as the main dataset")
+                st.experimental_rerun()
+            
+        st.write("---")
+        st.write("### Upload a new dataset")
         
         # Choose data source
         data_source = st.radio("Select Data Source", ["File Upload", "API"])
         
         df = load_data(data_source)
         
+        # In the main function, Data Upload page
         if df is not None:
             st.success(f"Data loaded successfully! Shape: {df.shape}")
-            st.dataframe(df.head())
-    
+            st.dataframe(df.head(), use_container_width=True)
+        
     # Data Exploration Page
     elif page == "Data Exploration":
         st.header("Exploratory Data Analysis")
@@ -579,6 +862,11 @@ def main():
             download_data(st.session_state.df)
         else:
             st.warning("Please upload data first.")
+
+# Join Datasets Page
+    elif page == "Join Datasets":
+        st.header("Join Multiple Datasets")
+        join_datasets()
 
 if __name__ == "__main__":
     main()
