@@ -359,8 +359,9 @@ def ai_insights(df):
             Keep your response concise and focused on the most important aspects.
             """
             
-            # Call OpenAI API
-            response = openai.ChatCompletion.create(
+            # Call OpenAI API using the new client format
+            client = openai.OpenAI(api_key=openai_api_key)
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data analysis assistant."},
@@ -369,7 +370,7 @@ def ai_insights(df):
                 max_tokens=1000
             )
             
-            # Display the response
+            # Display the response (updated to match new response format)
             st.write("### AI-Generated Data Summary")
             st.write(response.choices[0].message.content)
             
@@ -416,8 +417,9 @@ def ai_insights(df):
             Keep your response concise and focused on the most important aspects.
             """
             
-            # Call OpenAI API
-            response = openai.ChatCompletion.create(
+            # Call OpenAI API using the new client format
+            client = openai.OpenAI(api_key=openai_api_key)
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data analysis assistant."},
@@ -426,7 +428,7 @@ def ai_insights(df):
                 max_tokens=800
             )
             
-            # Display the response
+            # Display the response (updated to match new response format)
             st.write(f"### AI Analysis of '{column_to_analyze}'")
             st.write(response.choices[0].message.content)
             
@@ -456,8 +458,9 @@ def ai_insights(df):
             Focus on visualizations that would reveal important patterns or relationships in the data.
             """
             
-            # Call OpenAI API
-            response = openai.ChatCompletion.create(
+            # Call OpenAI API using the new client format
+            client = openai.OpenAI(api_key=openai_api_key)
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful data visualization expert."},
@@ -466,7 +469,7 @@ def ai_insights(df):
                 max_tokens=1000
             )
             
-            # Display the response
+            # Display the response (updated to match new response format)
             st.write("### AI-Recommended Visualizations")
             st.write(response.choices[0].message.content)
             
