@@ -20,6 +20,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 from datetime import datetime
+from pandasql import sqldf
 
 # Try to import openai, but handle the case where it's not installed
 try:
@@ -34,10 +35,13 @@ try:
     from langchain.llms import OpenAI
     from langchain.chains import LLMChain
     from langchain.prompts import PromptTemplate
+    from langchain.chains import AnalyzeDocumentChain
+    from langchain.agents import create_pandas_dataframe_agent
+    from langchain.agents.agent_types import AgentType
     langchain_available = True
 except ImportError:
     langchain_available = False
-    st.sidebar.warning("LangChain is not installed. Some AI features will be limited. Run 'pip install langchain' to install it.")
+    st.sidebar.warning("LangChain is not installed or some components are missing. Run 'pip install langchain chromadb tiktoken' to install it.")
 
 # Initialize session state variables if they don't exist
 if 'df' not in st.session_state:
@@ -61,7 +65,8 @@ if openai_api_key:
 
 # Sidebar navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Data Upload", "Data Exploration", "Data Cleaning", "Visualization", "AI Insights", "Download", "Join Datasets"])
+page = st.sidebar.radio("Go to", ["Data Upload", "Data Exploration", "Data Cleaning", 
+                                 "Visualization", "SQL Query", "AI Insights", "Download", "Join Datasets"])
 
 # Function to load data from various sources
 def load_data(file_or_api):
@@ -419,160 +424,177 @@ def visualize_data(df):
                 st.write("Please select at least 2 columns for pair plot.")
         else:
             st.write("Not enough numerical columns for pair plot.")
-
-# Function for AI insights using LangChain and OpenAI
 def ai_insights(df):
     st.subheader("AI-Powered Insights")
     
-    if not openai_available:
-        st.error("The OpenAI package is not installed. Please install it using 'pip install openai' to use AI features.")
+    if not all([openai_available, langchain_available, openai_api_key]):
+        st.warning("Please ensure OpenAI and LangChain are installed and API key is provided.")
         return
     
-    if not langchain_available:
-        st.warning("The LangChain package is not installed. Some advanced AI features may not be available. Install it using 'pip install langchain'.")
+    # Create tabs for different AI features
+    tab1, tab2, tab3, tab4 = st.tabs(["Data Analysis", "Custom Queries", "Automated Visualizations", "Advanced Insights"])
     
-    if not openai_api_key:
-        st.warning("Please enter your OpenAI API key in the sidebar to use AI features.")
-        return
+    with tab1:
+        st.write("### AI Data Analysis")
+        if st.button("Analyze Dataset", key="analyze_dataset_btn"):
+            try:
+                # Create a more focused prompt to reduce tokens and iterations
+                analysis_prompt = """
+                Provide a concise analysis of this dataset with:
+                1. Basic statistics of key numerical columns
+                2. Top 2-3 most significant patterns
+                3. Any obvious data quality issues
+                Keep the response focused and under 500 words.
+                """
+                
+                # Configure agent with optimized settings
+                agent = create_pandas_dataframe_agent(
+                    OpenAI(
+                        temperature=0,
+                        model_name="gpt-3.5-turbo",
+                        max_tokens=1000,
+                        request_timeout=60
+                    ),
+                    df,
+                    verbose=True,
+                    agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+                    max_iterations=5
+                )
+                
+                # Add progress indicator
+                with st.spinner("Analyzing data... This may take a moment."):
+                    analysis = agent.run(analysis_prompt)
+                    st.write(analysis)
+                
+            except Exception as e:
+                st.error(f"Analysis error: {str(e)}")
+                st.info("Try analyzing a smaller subset of your data or simplifying your request.")
+
+    with tab2:
+        st.write("### Custom Data Queries")
+        user_question = st.text_input("Ask a question about your data:")
+        if user_question and st.button("Get Answer", key="custom_query_btn"):
+            try:
+                agent = create_pandas_dataframe_agent(
+                    OpenAI(temperature=0, model_name="gpt-3.5-turbo"),  # Updated model
+                    df,
+                    verbose=True,
+                    agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION
+                )
+                response = agent.run(user_question)
+                st.write(response)
+            except Exception as e:
+                st.error(f"Error processing query: {e}")
     
-    # Data summary with OpenAI
-    if st.button("Generate Data Summary"):
-        try:
-            # Prepare data description
-            data_info = f"Dataset shape: {df.shape}\n"
-            data_info += f"Columns: {', '.join(df.columns)}\n"
-            data_info += f"Data types:\n{df.dtypes}\n"
-            data_info += f"Summary statistics:\n{df.describe().to_string()}\n"
-            data_info += f"First few rows:\n{df.head(5).to_string()}\n"
-            
-            # Create prompt for OpenAI
-            prompt = f"""
-            You are a data analyst. Analyze the following dataset and provide key insights:
-            
-            {data_info}
-            
-            Please provide:
-            1. A summary of what this dataset contains
-            2. Key observations about the data
-            3. Potential issues or anomalies in the data
-            4. Suggestions for further analysis
-            
-            Keep your response concise and focused on the most important aspects.
-            """
-            
-            # Call OpenAI API using the compatible format
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analysis assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1000
-            )
-            
-            # Display the response
-            st.write("### AI-Generated Data Summary")
-            st.write(response['choices'][0]['message']['content'])
-            
-        except Exception as e:
-            st.error(f"Error generating AI insights: {e}")
+    with tab3:
+        st.write("### AI Visualization Recommendations")
+        if st.button("Generate Visualization Suggestions", key="viz_suggestions_btn"):
+            try:
+                # Create visualization-specific prompt
+                viz_prompt = PromptTemplate(
+                    input_variables=["columns", "dtypes"],
+                    template="""
+                    Given a dataset with the following columns and their types:
+                    {columns}
+                    {dtypes}
+                    
+                    Suggest 3-4 specific visualizations that would be most insightful. For each:
+                    1. Specify the exact visualization type
+                    2. Which columns to use
+                    3. Why this visualization would be valuable
+                    4. Any specific settings or parameters to use
+                    """
+                )
+                
+                llm_chain = LLMChain(
+                    llm=OpenAI(temperature=0.7, model_name="gpt-3.5-turbo"),
+                    prompt=viz_prompt
+                )
+                
+                suggestions = llm_chain.run({
+                    "columns": df.columns.tolist(),
+                    "dtypes": df.dtypes.to_string()
+                })
+                
+                st.write(suggestions)
+            except Exception as e:
+                st.error(f"Error generating suggestions: {e}")
     
-    # Column analysis with OpenAI
-    st.write("### Analyze Specific Column")
-    column_to_analyze = st.selectbox("Select column to analyze", df.columns)
-    
-    if st.button("Analyze Column"):
-        try:
-            # Prepare column data
-            column_data = df[column_to_analyze]
-            data_type = str(column_data.dtype)
-            
-            column_info = f"Column name: {column_to_analyze}\n"
-            column_info += f"Data type: {data_type}\n"
-            
-            if pd.api.types.is_numeric_dtype(column_data):
-                column_info += f"Min: {column_data.min()}\n"
-                column_info += f"Max: {column_data.max()}\n"
-                column_info += f"Mean: {column_data.mean()}\n"
-                column_info += f"Median: {column_data.median()}\n"
-                column_info += f"Standard deviation: {column_data.std()}\n"
-            else:
-                column_info += f"Unique values: {column_data.nunique()}\n"
-                column_info += f"Most common values: {column_data.value_counts().head(5).to_dict()}\n"
-            
-            column_info += f"Missing values: {column_data.isnull().sum()} ({column_data.isnull().mean() * 100:.2f}%)\n"
-            
-            # Create prompt for OpenAI
-            prompt = f"""
-            You are a data analyst. Analyze the following column from a dataset and provide insights:
-            
-            {column_info}
-            
-            Please provide:
-            1. A summary of what this column represents
-            2. Key observations about the distribution or patterns
-            3. Potential issues or anomalies
-            4. Suggestions for handling this column in analysis
-            
-            Keep your response concise and focused on the most important aspects.
-            """
-            
-            # Call OpenAI API using the compatible format
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analysis assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=800
-            )
-            
-            # Display the response
-            st.write(f"### AI Analysis of '{column_to_analyze}'")
-            st.write(response['choices'][0]['message']['content'])
-            
-        except Exception as e:
-            st.error(f"Error analyzing column: {e}")
-    
-    # Generate visualization recommendations
-    if st.button("Recommend Visualizations"):
-        try:
-            # Prepare data description
-            data_info = f"Dataset shape: {df.shape}\n"
-            data_info += f"Columns: {', '.join(df.columns)}\n"
-            data_info += f"Data types:\n{df.dtypes}\n"
-            
-            # Create prompt for OpenAI
-            prompt = f"""
-            You are a data visualization expert. Based on the following dataset information, recommend 3-5 specific visualizations that would be most insightful:
-            
-            {data_info}
-            
-            For each recommendation, please provide:
-            1. The type of visualization (e.g., bar chart, scatter plot)
-            2. Which specific columns to use
-            3. Why this visualization would be insightful
-            4. Any specific settings or transformations to apply
-            
-            Focus on visualizations that would reveal important patterns or relationships in the data.
-            """
-            
-            # Call OpenAI API using the compatible format
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data visualization expert."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1000
-            )
-            
-            # Display the response
-            st.write("### AI-Recommended Visualizations")
-            st.write(response['choices'][0]['message']['content'])
-            
-        except Exception as e:
-            st.error(f"Error generating visualization recommendations: {e}")
+    with tab4:
+        st.write("### Advanced Pattern Detection")
+        if st.button("Detect Advanced Patterns", key="pattern_detection_btn"):
+            try:
+                # Create pattern detection prompt
+                pattern_prompt = PromptTemplate(
+                    input_variables=["summary", "correlations"],
+                    template="""
+                    Based on this dataset summary:
+                    {summary}
+                    
+                    And these correlations:
+                    {correlations}
+                    
+                    Please identify:
+                    1. Complex patterns or relationships
+                    2. Potential causality indicators
+                    3. Anomalies or outlier patterns
+                    4. Recommendations for deeper analysis
+                    """
+                )
+                
+                llm_chain = LLMChain(
+                    llm=OpenAI(temperature=0.7, model_name="gpt-3.5-turbo"),  # Updated model
+                    prompt=pattern_prompt
+                )
+                
+                patterns = llm_chain.run({
+                    "summary": df.describe().to_string(),
+                    "correlations": df.corr().to_string() if df.select_dtypes(include=['number']).columns.any() else "No numerical columns for correlation"
+                })
+                
+                st.write(patterns)
+            except Exception as e:
+                st.error(f"Error detecting patterns: {e}")
+
+    # Remove these duplicate sections
+    # with tab3:
+    #     sql_query_editor(df)
+    # 
+    # with tab4:
+    #     st.write("### Advanced Pattern Detection")
+    #     if st.button("Detect Advanced Patterns", key="pattern_detection_btn"):
+    #         try:
+    #             # Create pattern detection prompt
+    #             pattern_prompt = PromptTemplate(
+    #                 input_variables=["summary", "correlations"],
+    #                 template="""
+    #                 Based on this dataset summary:
+    #                 {summary}
+    #                 
+    #                 And these correlations:
+    #                 {correlations}
+    #                 
+    #                 Please identify:
+    #                 1. Complex patterns or relationships
+    #                 2. Potential causality indicators
+    #                 3. Anomalies or outlier patterns
+    #                 4. Recommendations for deeper analysis
+    #                 """
+    #             )
+    #             
+    #             llm_chain = LLMChain(
+    #                 llm=OpenAI(temperature=0.7, model_name="gpt-3.5-turbo"),  # Updated model
+    #                 prompt=pattern_prompt
+    #             )
+    #             
+    #             patterns = llm_chain.run({
+    #                 "summary": df.describe().to_string(),
+    #                 "correlations": df.corr().to_string() if df.select_dtypes(include=['number']).columns.any() else "No numerical columns for correlation"
+    #             })
+    #             
+    #             st.write(patterns)
+    #         except Exception as e:
+    #             st.error(f"Error detecting patterns: {e}")
 
 # Function to download the cleaned data
 def download_data(df):
@@ -862,11 +884,60 @@ def main():
             download_data(st.session_state.df)
         else:
             st.warning("Please upload data first.")
-
-# Join Datasets Page
+    
+    # SQL Query Page
+    elif page == "SQL Query":
+        if st.session_state.df is not None:
+            sql_query_editor(st.session_state.df)
+        else:
+            st.warning("Please upload data first.")
+    
+    # Join Datasets Page
     elif page == "Join Datasets":
         st.header("Join Multiple Datasets")
         join_datasets()
+# First, add this import at the top of your file with other imports
+import duckdb
 
+# Replace the existing sql_query_editor function with this improved version
+def sql_query_editor(df):
+    st.header("SQL Query Editor")
+    st.info("Write SQL queries to analyze your data. The DataFrame is available as 'df' in your queries.")
+    
+    # Example queries with proper formatting
+    st.write("Example queries:")
+    st.code("""SELECT * FROM df LIMIT 5
+SELECT column_name, COUNT(*) FROM df GROUP BY column_name
+SELECT * FROM df WHERE column_name > 100""")
+    
+    # SQL query input
+    sql_query = st.text_area("Enter SQL Query:", value="SELECT * FROM df LIMIT 5", height=100, key="sql_query_input")
+    
+    if st.button("Run Query", key="run_sql_btn"):
+        try:
+            # Create a DuckDB connection and register the DataFrame
+            con = duckdb.connect(database=':memory:')
+            con.register('df', df)
+            
+            # Execute the query
+            query_result = con.execute(sql_query).df()
+            
+            # Display results
+            st.write("### Query Results")
+            st.dataframe(query_result)
+            
+            # Show result statistics
+            st.info(f"Query returned {len(query_result)} rows × {len(query_result.columns)} columns")
+            
+            # Close the connection
+            con.close()
+            
+        except Exception as e:
+            st.error(f"Error executing query: {str(e)}")
+            st.info("Make sure your query is valid SQL and references the table as 'df'")
 if __name__ == "__main__":
     main()
+
+
+
+
