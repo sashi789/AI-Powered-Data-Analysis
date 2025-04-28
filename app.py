@@ -20,7 +20,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 from datetime import datetime
-from pandasql import sqldf
+import duckdb  # Make sure this import is here
+
+# Remove the pandasql import since we're using duckdb
+# from pandasql import sqldf
 
 # Try to import openai, but handle the case where it's not installed
 try:
